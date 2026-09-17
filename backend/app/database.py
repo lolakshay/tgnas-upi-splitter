@@ -2,11 +2,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from backend.app.config import settings
 
+db_url = settings.database_url
+if not db_url or not (db_url.startswith("sqlite") or db_url.startswith("postgres")):
+    db_url = "sqlite:////tmp/upi_split_pay.db"
+
 # SQLite specific connect args for thread safety
-connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
 
 engine = create_engine(
-    settings.database_url,
+    db_url,
     connect_args=connect_args,
     echo=False
 )

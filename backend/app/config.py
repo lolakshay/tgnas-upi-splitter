@@ -11,8 +11,11 @@ class Settings(BaseModel):
     default_max_chunk_paise: int = 199900
     currency: str = "INR"
     
-    # Database
-    database_url: str = os.getenv("DATABASE_URL", "sqlite:///./upi_split_pay.db")
+    # Database: on Vercel/serverless, use /tmp/ which is writable
+    database_url: str = os.getenv(
+        "DATABASE_URL", 
+        "sqlite:////tmp/upi_split_pay.db" if os.getenv("VERCEL") else "sqlite:///./upi_split_pay.db"
+    )
     
     # CORS
     cors_origins: list[str] = ["*"]

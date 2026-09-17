@@ -70,73 +70,103 @@ def _format_session_response(session: PaymentSession) -> SessionResponse:
     )
 
 
+@router.get("/debug-db")
+def debug_db(db: Session = Depends(get_db)):
+    import os
+    from sqlalchemy import text
+    try:
+        db.execute(text("SELECT 1"))
+        return {
+            "status": "ok",
+            "database_url": settings.database_url,
+            "is_vercel": bool(os.getenv("VERCEL")),
+            "db_connected": True
+        }
+    except Exception as e:
+        import traceback
+        return {
+            "status": "error",
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "database_url": settings.database_url
+        }
+
+
 @router.post("/sessions", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
 def create_payment_session(req: CreateSessionRequest, db: Session = Depends(get_db)):
     """
     Creates a payment session and splits total_amount_paise into sequential UPI payments.
     Server calculates split chunks and guarantees sum(chunks) == total_amount_paise.
     """
-    if req.custom_split_paise:
-        try:
-            chunks = validate_custom_split(req.total_amount_paise, req.custom_split_paise)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-    else:
-        try:
-            chunks = calculate_default_split(req.total_amount_paise)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+    try:
+        if req.custom_split_paise:
+            try:
+                chunks = validate_custom_split(req.total_amount_paise, req.custom_split_paise)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+        else:
+            try:
+                chunks = calculate_default_split(req.total_amount_paise)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
-    # Generate unique readable session ID
-    random_code = uuid.uuid4().hex[:6].upper()
-    session_id = f"UPSP-{random_code}"
+        # Generate unique readable session ID
+        random_code = uuid.uuid4().hex[:6].upper()
+        session_id = f"UPSP-{random_code}"
 
-    session = PaymentSession(
-        session_id=session_id,
-        payee_vpa=req.payee_vpa,
-        payee_name=req.payee_name,
-        merchant_code=req.merchant_code,
-        total_amount_paise=req.total_amount_paise,
-        currency="INR",
-        notes=req.notes,
-        status="PENDING",
-        current_payment_index=0
-    )
-    db.add(session)
-    db.flush()
-
-    total_chunks = len(chunks)
-    for idx, chunk_paise in enumerate(chunks):
-        seq = idx + 1
-        payment_id = f"PAY-{random_code}-{seq}"
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        tx_ref = f"TXN{now_utc.strftime('%y%m%d%H%M%S')}{seq:02d}{random_code}"
-        note = f"Split {seq} of {total_chunks} ({session_id})"
-
-        upi_uri = generate_upi_uri(
+        session = PaymentSession(
+            session_id=session_id,
             payee_vpa=req.payee_vpa,
             payee_name=req.payee_name,
-            amount_paise=chunk_paise,
-            transaction_ref=tx_ref,
-            note=note,
             merchant_code=req.merchant_code,
-            currency="INR"
+            total_amount_paise=req.total_amount_paise,
+            currency="INR",
+            notes=req.notes,
+            status="PENDING",
+            current_payment_index=0
         )
+        db.add(session)
+        db.flush()
 
-        payment = SplitPayment(
-            payment_id=payment_id,
-            session_id=session_id,
-            sequence=seq,
-            amount_paise=chunk_paise,
-            upi_uri=upi_uri,
-            transaction_ref=tx_ref,
-            status=PaymentStatus.CREATED.value
-        )
-        db.add(payment)
+        total_chunks = len(chunks)
+        for idx, chunk_paise in enumerate(chunks):
+            seq = idx + 1
+            payment_id = f"PAY-{random_code}-{seq}"
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            tx_ref = f"TXN{now_utc.strftime('%y%m%d%H%M%S')}{seq:02d}{random_code}"
+            note = f"Split {seq} of {total_chunks} ({session_id})"
 
-    db.commit()
-    db.refresh(session)
-    return _format_session_response(session)
+            upi_uri = generate_upi_uri(
+                payee_vpa=req.payee_vpa,
+                payee_name=req.payee_name,
+                amount_paise=chunk_paise,
+                transaction_ref=tx_ref,
+                note=note,
+                merchant_code=req.merchant_code,
+                currency="INR"
+            )
+
+            payment = SplitPayment(
+                payment_id=payment_id,
+                session_id=session_id,
+                sequence=seq,
+                amount_paise=chunk_paise,
+                upi_uri=upi_uri,
+                transaction_ref=tx_ref,
+                status=PaymentStatus.CREATED.value
+            )
+            db.add(payment)
+
+        db.commit()
+        db.refresh(session)
+        return _format_session_response(session)
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}\n{tb}")
 
 
 @router.get("/sessions/{session_id}", response_model=SessionResponse)

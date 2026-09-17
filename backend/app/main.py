@@ -27,7 +27,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount API endpoints
+# Mount API endpoints: support both /api/... and direct /... for Vercel serverless routing
+app.include_router(api_router, prefix="/api")
 app.include_router(api_router)
 
 # Locate frontend build directory across local dev, Docker, and Vercel serverless

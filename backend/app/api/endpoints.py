@@ -31,7 +31,7 @@ from backend.app.services.payment_provider import (
 )
 from backend.app.services.reconciliation_service import compute_session_progress
 
-router = APIRouter(prefix="/api", tags=["Payments"])
+router = APIRouter(tags=["Payments"])
 
 def _format_payment_response(p: SplitPayment) -> SplitPaymentResponse:
     return SplitPaymentResponse(

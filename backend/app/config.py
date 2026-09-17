@@ -3,15 +3,23 @@ from pydantic import BaseModel
 
 def get_database_url() -> str:
     raw = (os.getenv("DATABASE_URL") or "").strip()
-    # If DATABASE_URL is empty, whitespace, or not a recognized scheme, use safe sqlite fallback
-    if not raw or not (raw.startswith("sqlite") or raw.startswith("postgres")):
-        if os.getenv("VERCEL"):
+    is_vercel = bool(os.getenv("VERCEL"))
+
+    # On Vercel / AWS Lambda serverless: filesystem is READ-ONLY except /tmp/
+    # Any SQLite database MUST be in /tmp/
+    if is_vercel:
+        if not raw or raw.startswith("sqlite"):
             return "sqlite:////tmp/upi_split_pay.db"
+        if raw.startswith("postgres://"):
+            return raw.replace("postgres://", "postgresql://", 1)
+        return raw
+
+    # Local development
+    if not raw or not (raw.startswith("sqlite") or raw.startswith("postgres")):
         return "sqlite:///./upi_split_pay.db"
-    
-    # Fix Heroku/Render/Supabase 'postgres://' for SQLAlchemy 2
+
     if raw.startswith("postgres://"):
-        raw = raw.replace("postgres://", "postgresql://", 1)
+        return raw.replace("postgres://", "postgresql://", 1)
     return raw
 
 class Settings(BaseModel):
